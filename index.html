@@ -114,15 +114,25 @@ body {
 
 header {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 8px;
+  flex-direction: column;
+  gap: 4px;
   padding: 6px 8px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   z-index: 10;
 }
+.header-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+.header-status {
+  font-size: 0.6rem; color: var(--muted); text-align: center;
+  letter-spacing: 0.02em; display: none;
+}
+.header-status.visible { display: block; }
 .track-name {
   font-family: var(--font-display);
   font-size: 0.68rem; font-weight: 500; letter-spacing: 0.06em;
@@ -138,6 +148,8 @@ header {
 .hdr-btn.active { background: var(--accent); color: #0d0f12; border-color: var(--accent); font-weight: 500; }
 .hdr-btn.gps-on { background: #1d5f3a; border-color: #2ecc71; color: #eafff0; }
 .hdr-btn.gps-error { background: #4a1a1a; border-color: var(--red); color: #ffe0e0; }
+.hdr-btn.zoom-btn { border-color: var(--accent); color: var(--accent); display: none; }
+.hdr-btn.zoom-btn.visible { display: flex; }
 .hdr-select {
   background: #1a2230; border: 1px solid var(--border); color: var(--text);
   font-family: var(--font-ui); font-size: 0.62rem; padding: 6px 6px; border-radius: 4px;
@@ -155,7 +167,7 @@ header {
   position: relative;
   overflow: hidden;
 }
-#profile-pane { border-bottom: 2px solid var(--border); background: var(--bg); }
+#profile-pane { background: var(--bg); }
 #map { width: 100%; height: 100%; }
 
 #elev-chart-canvas { width: 100%; height: 100%; display: block; }
@@ -168,41 +180,28 @@ header {
 .legend-item { display: flex; align-items: center; gap: 3px; font-size: 0.5rem; color: var(--muted); white-space: nowrap; }
 .legend-swatch { width: 7px; height: 7px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.15); }
 
-/* readout bar overlay on top of profile pane */
-#readout-bar {
-  position: absolute; top: 6px; left: 6px; right: 6px; z-index: 5;
-  display: flex; justify-content: space-between; gap: 6px;
-  background: rgba(13,15,18,0.82); border: 1px solid var(--border); border-radius: 5px;
-  padding: 6px 10px; pointer-events: none;
+/* central stats lane, between profile and map panes */
+#stats-lane {
+  flex: 0 0 auto;
+  display: flex;
+  background: var(--surface);
+  border-top: 2px solid var(--border);
+  border-bottom: 2px solid var(--border);
+  padding: 8px 4px;
 }
-.ro-item { display: flex; flex-direction: column; align-items: center; flex: 1; }
-.ro-val { font-family: var(--font-display); font-size: 0.78rem; color: var(--accent); letter-spacing: 0.03em; }
-.ro-lbl { font-size: 0.52rem; color: var(--muted); letter-spacing: 0.08em; margin-top: 1px; }
-
-#gps-status-line {
-  position: absolute; top: 6px; left: 6px; right: 6px; z-index: 6;
-  text-align: center; font-size: 0.6rem; color: var(--muted);
-  background: rgba(13,15,18,0.82); border: 1px solid var(--border); border-radius: 5px;
-  padding: 5px 8px; display: none;
-}
-#gps-status-line.visible { display: block; }
+.stat-item { flex: 1; text-align: center; border-right: 1px solid var(--border); }
+.stat-item:last-child { border-right: none; }
+.stat-val { font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; color: var(--accent); letter-spacing: 0.02em; }
+.stat-lbl { font-size: 0.6rem; color: var(--muted); letter-spacing: 0.08em; margin-top: 2px; }
 
 .focus-marker {
   width: 16px; height: 16px; border-radius: 50%;
-  background: rgba(240,192,64,0.28);
-  border: 2px solid var(--accent);
-  box-shadow: 0 0 9px var(--accent);
+  background: #e74c3c;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 8px rgba(231,76,60,0.9);
   pointer-events: none;
   display: none;
 }
-
-#reset-zoom-btn {
-  position: absolute; top: 6px; right: 6px; z-index: 7;
-  background: rgba(13,15,18,0.88); border: 1px solid var(--accent); color: var(--accent);
-  font-family: var(--font-ui); font-size: 0.6rem; letter-spacing: 0.04em;
-  padding: 6px 9px; border-radius: 5px; cursor: pointer; display: none;
-}
-#reset-zoom-btn.visible { display: block; }
 
 #map-debug {
   position: absolute; left: 6px; right: 6px; bottom: 6px; z-index: 8;
@@ -247,30 +246,32 @@ header {
 <!-- SCREEN 2 -->
 <div id="screen-viewer">
   <header>
-    <span class="track-name" id="track-name">—</span>
-    <button class="hdr-btn" id="btn-gps"><span class="gps-dot"></span><span id="gps-btn-label">GPS</span></button>
-    <button class="hdr-btn" id="btn-color-toggle">🎨 Pendenza</button>
-    <select class="hdr-select" id="segment-step-select">
-      <option value="50" selected>50 m</option>
-      <option value="100">100 m</option>
-      <option value="200">200 m</option>
-      <option value="500">500 m</option>
-    </select>
-    <button class="hdr-btn" id="btn-new">↩ Nuovo</button>
+    <div class="header-row">
+      <span class="track-name" id="track-name">—</span>
+      <button class="hdr-btn" id="btn-gps"><span class="gps-dot"></span><span id="gps-btn-label">GPS</span></button>
+      <button class="hdr-btn" id="btn-color-toggle">🎨 Pendenza</button>
+      <select class="hdr-select" id="segment-step-select">
+        <option value="50" selected>50 m</option>
+        <option value="100">100 m</option>
+        <option value="200">200 m</option>
+        <option value="500">500 m</option>
+      </select>
+      <button class="hdr-btn zoom-btn" id="reset-zoom-btn">⤢ Vedi tutto</button>
+      <button class="hdr-btn" id="btn-new">↩ Nuovo</button>
+    </div>
+    <div class="header-status" id="gps-status-line"></div>
   </header>
 
   <div id="split-wrap">
     <div id="profile-pane">
-      <div id="readout-bar">
-        <div class="ro-item"><span class="ro-val" id="ro-dist">--</span><span class="ro-lbl">KM</span></div>
-        <div class="ro-item"><span class="ro-val" id="ro-ele">--</span><span class="ro-lbl">QUOTA m</span></div>
-        <div class="ro-item"><span class="ro-val" id="ro-slope">--</span><span class="ro-lbl">PEND. %</span></div>
-        <div class="ro-item"><span class="ro-val" id="ro-acc">--</span><span class="ro-lbl">GPS ±m</span></div>
-      </div>
-      <div id="gps-status-line"></div>
-      <button id="reset-zoom-btn">⤢ Vedi tutto</button>
       <canvas id="elev-chart-canvas"></canvas>
       <div class="elev-legend" id="elev-legend"></div>
+    </div>
+    <div id="stats-lane">
+      <div class="stat-item"><span class="stat-val" id="ro-dist">--</span><span class="stat-lbl">KM</span></div>
+      <div class="stat-item"><span class="stat-val" id="ro-ele">--</span><span class="stat-lbl">QUOTA m</span></div>
+      <div class="stat-item"><span class="stat-val" id="ro-slope">--</span><span class="stat-lbl">PEND. %</span></div>
+      <div class="stat-item"><span class="stat-val" id="ro-acc">--</span><span class="stat-lbl">GPS ±m</span></div>
     </div>
     <div id="map-pane">
       <div id="map"></div>
@@ -502,6 +503,8 @@ let viewStart = 0;
 let viewEnd = 0;      // set to trackModel.total once a track is loaded
 let MIN_SPAN = 30;    // narrowest allowed view window, in meters
 const touchAnchors = new Map(); // touch identifier -> distance anchor, for pinch-zoom
+let zoomCycleIndex = 0; // cycles through x4/x8/x16/x1 on double-tap/double-click
+let lastGpsDist = null; // most recent GPS-projected distance along the track
 
 /* ══════════════════════════════════════════
    ELEVATION CHART (canvas)
@@ -525,7 +528,7 @@ function drawChart() {
   const W = cssW, H = cssH;
   chartCtx.clearRect(0, 0, W, H);
 
-  const pad = { t: 40, b: 20, l: 34, r: 8 };
+  const pad = { t: 10, b: 20, l: 34, r: 8 };
   const cw = Math.max(10, W - pad.l - pad.r);
   const ch = Math.max(10, H - pad.t - pad.b - 16); // leave room for legend strip
   const model = trackModel;
@@ -672,7 +675,7 @@ function setView(newStart, newEnd) {
   btn.classList.toggle('visible', isZoomed);
 }
 
-function resetZoom() { if (trackModel) setView(0, trackModel.total); }
+function resetZoom() { if (trackModel) { zoomCycleIndex = 0; setView(0, trackModel.total); } }
 document.getElementById('reset-zoom-btn').addEventListener('click', resetZoom);
 
 function zoomAt(pivotD, scale) {
@@ -681,6 +684,34 @@ function zoomAt(pivotD, scale) {
   const ratio = (pivotD - viewStart) / (span || 1);
   const newStart = pivotD - ratio * newSpan;
   setView(newStart, newStart + newSpan);
+}
+
+/* GPS-follow: keep the given distance fixed at 1/3 of the visible span
+   (2/3 of the track "ahead"). Used whenever GPS is active and the view is zoomed. */
+function followGpsView(span, gpsDist) {
+  if (!trackModel || gpsDist == null) return;
+  const total = trackModel.total;
+  span = Math.max(MIN_SPAN, Math.min(total, span));
+  if (span >= total - 1e-6) { setView(0, total); return; }
+  const newStart = gpsDist - span / 3;
+  setView(newStart, newStart + span);
+}
+
+/* Double-tap / double-click: cycle through preset zoom levels x4 → x8 → x16 → x1 → … */
+const ZOOM_CYCLE_FACTORS = [4, 8, 16, 1];
+function applyZoomCycle(clientX) {
+  if (!trackModel) return;
+  const total = trackModel.total;
+  const factor = ZOOM_CYCLE_FACTORS[zoomCycleIndex % ZOOM_CYCLE_FACTORS.length];
+  zoomCycleIndex = (zoomCycleIndex + 1) % ZOOM_CYCLE_FACTORS.length;
+  const newSpan = Math.max(MIN_SPAN, Math.min(total, factor === 1 ? total : total / factor));
+
+  if (gpsActive && lastGpsDist != null) {
+    followGpsView(newSpan, lastGpsDist);
+  } else {
+    const pivotD = distFromClientX(clientX); // uses the view as it was BEFORE this zoom change
+    setView(pivotD - newSpan / 2, pivotD + newSpan / 2);
+  }
 }
 
 chartCanvas.addEventListener('mousemove', e => { if (touchAnchors.size === 0) updateFocusAtDistance(distFromClientX(e.clientX)); });
@@ -744,7 +775,22 @@ function releaseEndedTouches(e) {
 chartCanvas.addEventListener('touchend', releaseEndedTouches, { passive: true });
 chartCanvas.addEventListener('touchcancel', releaseEndedTouches, { passive: true });
 
-chartCanvas.addEventListener('dblclick', resetZoom);
+/* double-tap detection (touch) */
+let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+chartCanvas.addEventListener('touchend', e => {
+  if (e.touches.length > 0 || !e.changedTouches || e.changedTouches.length !== 1) return;
+  const t = e.changedTouches[0];
+  const now = Date.now();
+  const dx = Math.abs(t.clientX - lastTapX), dy = Math.abs(t.clientY - lastTapY);
+  if (now - lastTapTime < 350 && dx < 30 && dy < 30) {
+    applyZoomCycle(t.clientX);
+    lastTapTime = 0;
+  } else {
+    lastTapTime = now; lastTapX = t.clientX; lastTapY = t.clientY;
+  }
+}, { passive: true });
+
+chartCanvas.addEventListener('dblclick', e => applyZoomCycle(e.clientX));
 
 /* ══════════════════════════════════════════
    ON-SCREEN MAP DEBUG PANEL (for diagnosing issues directly on-device,
@@ -940,6 +986,12 @@ function startGps() {
     pos => {
       const { latitude, longitude, accuracy } = pos.coords;
       const proj = projectGpsToTrack(latitude, longitude);
+      lastGpsDist = proj.dist;
+
+      // keep the GPS point fixed at 1/3 of the view whenever we're zoomed in
+      const span = viewEnd - viewStart;
+      if (trackModel && span < trackModel.total - 1e-6) followGpsView(span, proj.dist);
+
       updateFocusAtDistance(proj.dist, { accuracy });
       setGpsStatus(`GPS attivo · scostamento dal percorso: ${Math.round(proj.offsetMeters)} m`, 'on');
     },
@@ -973,6 +1025,8 @@ function loadTrack(td) {
   trackModel = buildTrackModel(td, segmentStep);
   viewStart = 0;
   viewEnd = trackModel.total;
+  zoomCycleIndex = 0;
+  lastGpsDist = null;
   document.getElementById('reset-zoom-btn').classList.remove('visible');
 
   document.getElementById('track-name').textContent = td.trackName;
@@ -1032,6 +1086,8 @@ document.getElementById('btn-new').addEventListener('click', () => {
   stopGps();
   trackData = null; trackModel = null; mapReady = false;
   viewStart = 0; viewEnd = 0;
+  zoomCycleIndex = 0;
+  lastGpsDist = null;
   touchAnchors.clear();
   document.getElementById('reset-zoom-btn').classList.remove('visible');
   clearFocus();
