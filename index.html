@@ -269,7 +269,7 @@ header {
     </div>
     <input type="file" id="file-input" accept=".gpx,application/gpx+xml,text/xml">
   </div>
-  <div class="version-badge">v. 20260904094922</div>
+  <div class="version-badge">v. 20260907114245</div>
   <div id="error-msg"></div>
   <div id="secure-warning"></div>
 </div>
@@ -282,6 +282,7 @@ header {
       <button class="hdr-btn" id="btn-gps"><span class="gps-dot"></span><span id="gps-btn-label">GPS</span></button>
       <span class="hdr-gps-acc" id="hdr-gps-acc">GPS ±--m</span>
       <button class="hdr-btn" id="btn-color-toggle">🎨 Pendenza</button>
+      <button class="hdr-btn" id="btn-alt-zoom">📏 Zoom Alt.</button>
       <select class="hdr-select" id="segment-step-select">
         <option value="50" selected>50 m</option>
         <option value="100">100 m</option>
@@ -477,48 +478,148 @@ function slopeAtDist(model, d) {
   return segs[lo] ? segs[lo].slope : 0;
 }
 
+/* min/max elevation within a given distance window, used by "Zoom Alt." mode */
+function computeVisibleEleRange(vStart, vEnd) {
+  let mn = Infinity, mx = -Infinity;
+  const startP = trackModel.interpAtDist(vStart);
+  const endP = trackModel.interpAtDist(vEnd);
+  mn = Math.min(mn, startP.ele, endP.ele);
+  mx = Math.max(mx, startP.ele, endP.ele);
+  trackModel.segments.forEach(s => {
+    if (s.d1 < vStart || s.d0 > vEnd) return;
+    mn = Math.min(mn, s.e0, s.e1);
+    mx = Math.max(mx, s.e0, s.e1);
+  });
+  return { min: mn, max: mx };
+}
+
 /* ══════════════════════════════════════════
-   NEAREST-POINT-ON-TRACK PROJECTION (for GPS fixes)
+   BEARING HELPERS (for disambiguating overlapping track sections,
+   e.g. out-and-back routes where outbound/return share the same road)
+══════════════════════════════════════════ */
+function bearingDeg(lat1, lon1, lat2, lon2) {
+  const φ1 = lat1*Math.PI/180, φ2 = lat2*Math.PI/180;
+  const λ1 = lon1*Math.PI/180, λ2 = lon2*Math.PI/180;
+  const y = Math.sin(λ2-λ1) * Math.cos(φ2);
+  const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
+  return (Math.atan2(y, x) * 180/Math.PI + 360) % 360;
+}
+function angularDiffDeg(a, b) {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+/* observed direction of travel, from the oldest to the newest fix currently
+   held in gpsHistory; null if there isn't enough reliable movement yet */
+function computeObservedBearing() {
+  if (gpsHistory.length < 2) return null;
+  const first = gpsHistory[0], last = gpsHistory[gpsHistory.length - 1];
+  if (haversine(first.lat, first.lon, last.lat, last.lon) < MIN_BEARING_DISPLACEMENT) return null;
+  return bearingDeg(first.lat, first.lon, last.lat, last.lon);
+}
+
+/* ══════════════════════════════════════════
+   PROJECT A GPS FIX ONTO THE TRACK
+   Handles routes that overlap themselves (e.g. out-and-back rides), where the
+   same physical road corresponds to two very different track-distances.
+   Strategy:
+     1. Project onto every edge, keep all near-tied matches (candidates).
+     2. Group candidates into clusters by track-distance (an out/back overlap
+        produces two well-separated clusters at a near-identical location).
+     3. If only one cluster: no ambiguity, use it directly.
+     4. Otherwise, prefer the cluster consistent with the last known position
+        (continuity — this is the common case while the app stays open).
+     5. If there is no recent position to compare against (e.g. right after
+        opening/reloading the app), use the direction of travel from the last
+        few GPS fixes to pick whichever cluster's track direction matches.
+     6. As a last resort (no reliable movement yet), fall back to the plain
+        geographically-nearest match.
 ══════════════════════════════════════════ */
 function projectGpsToTrack(lat, lon) {
   const pts = trackData.points;
+  const n = pts.length;
   const latRef = lat * Math.PI / 180;
   const mPerDegLat = 111320;
   const mPerDegLon = 111320 * Math.cos(latRef);
-
   function toXY(plat, plon) { return [ (plon - lon) * mPerDegLon, (plat - lat) * mPerDegLat ]; }
 
-  // 1) find nearest vertex (coarse)
-  let bestIdx = 0, bestD2 = Infinity;
-  for (let i = 0; i < pts.length; i++) {
-    const [x, y] = toXY(pts[i].lat, pts[i].lon);
-    const d2 = x*x + y*y;
-    if (d2 < bestD2) { bestD2 = d2; bestIdx = i; }
-  }
-
-  // 2) refine against the two segments adjacent to the nearest vertex
-  let bestDist = pts[bestIdx].dist;
-  let bestPerp2 = bestD2;
-
-  function tryEdge(ia, ib) {
-    if (ia < 0 || ib >= pts.length) return;
-    const [ax, ay] = toXY(pts[ia].lat, pts[ia].lon);
-    const [bx, by] = toXY(pts[ib].lat, pts[ib].lon);
+  // 1) project onto every edge, track the global best perpendicular distance
+  let globalBestPerp2 = Infinity;
+  const edgeResults = [];
+  for (let i = 0; i < n - 1; i++) {
+    const [ax, ay] = toXY(pts[i].lat, pts[i].lon);
+    const [bx, by] = toXY(pts[i+1].lat, pts[i+1].lon);
     const dx = bx - ax, dy = by - ay;
     const len2 = dx*dx + dy*dy;
     let t = len2 > 1e-9 ? -(ax*dx + ay*dy) / len2 : 0;
     t = Math.max(0, Math.min(1, t));
     const px = ax + t*dx, py = ay + t*dy;
     const perp2 = px*px + py*py;
-    if (perp2 < bestPerp2) {
-      bestPerp2 = perp2;
-      bestDist = pts[ia].dist + t * (pts[ib].dist - pts[ia].dist);
+    const dist = pts[i].dist + t * (pts[i+1].dist - pts[i].dist);
+    edgeResults.push({ perp2, dist, i });
+    if (perp2 < globalBestPerp2) globalBestPerp2 = perp2;
+  }
+  const globalBestPerp = Math.sqrt(globalBestPerp2);
+
+  // 2) gather near-tied candidates (generous tolerance: an overlapping leg of
+  //    the same physical road will sit almost exactly at the same distance)
+  const tolerance = Math.max(15, globalBestPerp + 12);
+  const tol2 = tolerance * tolerance;
+  const candidates = edgeResults.filter(e => e.perp2 <= tol2).sort((a, b) => a.dist - b.dist);
+
+  // 3) cluster candidates by track-distance (new cluster whenever there's a gap)
+  const CLUSTER_GAP = 80; // meters
+  const clusters = [];
+  for (const c of candidates) {
+    const cur = clusters[clusters.length - 1];
+    if (cur && (c.dist - cur.maxDist) <= CLUSTER_GAP) {
+      cur.maxDist = c.dist;
+      if (c.perp2 < cur.best.perp2) cur.best = c;
+    } else {
+      clusters.push({ best: c, minDist: c.dist, maxDist: c.dist });
     }
   }
-  tryEdge(bestIdx - 1, bestIdx);
-  tryEdge(bestIdx, bestIdx + 1);
 
-  return { dist: bestDist, offsetMeters: Math.sqrt(bestPerp2) };
+  function tangentBearingAt(edgeIdx) {
+    const a = pts[edgeIdx], b = pts[Math.min(n - 1, edgeIdx + 1)];
+    return bearingDeg(a.lat, a.lon, b.lat, b.lon);
+  }
+
+  let chosen;
+  if (clusters.length <= 1) {
+    chosen = clusters.length ? clusters[0].best : edgeResults.reduce((a, b) => (b.perp2 < a.perp2 ? b : a));
+  } else {
+    // (a) continuity: prefer the cluster nearest to where we already were
+    let continuityCluster = null;
+    if (lastGpsDist != null && lastGpsFixTime != null) {
+      const dt = Math.max(0.5, (Date.now() - lastGpsFixTime) / 1000);
+      const maxJump = Math.min(500, Math.max(60, 14 * dt * 2)); // generous ~14 m/s ceiling, doubled for safety
+      let bestGap = Infinity;
+      for (const cl of clusters) {
+        const gap = Math.min(Math.abs(cl.best.dist - lastGpsDist), Math.abs(cl.minDist - lastGpsDist), Math.abs(cl.maxDist - lastGpsDist));
+        if (gap <= maxJump && gap < bestGap) { bestGap = gap; continuityCluster = cl; }
+      }
+    }
+
+    if (continuityCluster) {
+      chosen = continuityCluster.best;
+    } else {
+      // (b) no continuity available (e.g. app just opened) — use direction of travel
+      const bearing = computeObservedBearing();
+      if (bearing != null) {
+        let bestCl = null, bestDiff = Infinity;
+        for (const cl of clusters) {
+          const diff = angularDiffDeg(bearing, tangentBearingAt(cl.best.i));
+          if (diff < bestDiff) { bestDiff = diff; bestCl = cl; }
+        }
+        chosen = bestCl.best;
+      } else {
+        // (c) last resort: not enough movement yet to know direction — nearest match
+        chosen = clusters.reduce((a, b) => (b.best.perp2 < a.best.perp2 ? b : a)).best;
+      }
+    }
+  }
+
+  return { dist: chosen.dist, offsetMeters: Math.sqrt(chosen.perp2) };
 }
 
 /* ══════════════════════════════════════════
@@ -541,6 +642,10 @@ let viewEnd = 0;      // set to trackModel.total once a track is loaded
 let MIN_SPAN = 30;    // narrowest allowed view window, in meters
 const touchAnchors = new Map(); // touch identifier -> distance anchor, for pinch-zoom
 let lastGpsDist = null; // most recent GPS-projected distance along the track
+let lastGpsFixTime = null; // timestamp (ms) of the fix that produced lastGpsDist
+let gpsHistory = []; // recent raw {lat,lon,t} fixes, used to detect direction of travel
+const GPS_HISTORY_MAX = 5;
+const MIN_BEARING_DISPLACEMENT = 4; // meters of movement required before trusting a computed bearing
 
 /* ══════════════════════════════════════════
    ELEVATION CHART (canvas)
@@ -568,11 +673,23 @@ function drawChart() {
   const cw = Math.max(10, W - pad.l - pad.r);
   const ch = Math.max(10, H - pad.t - pad.b - 16); // leave room for legend strip
   const model = trackModel;
-  const eleSpan = (model.maxEle - model.minEle) || 1;
-  const eleMin = model.minEle - eleSpan * 0.08;
-  const eleMax = model.maxEle + eleSpan * 0.08;
-  const range = eleMax - eleMin;
   const vStart = viewStart, vEnd = viewEnd, vSpan = (vEnd - vStart) || 1;
+
+  let eleMin, eleMax;
+  if (altYZoomEnabled) {
+    // Y axis scaled to the currently visible portion only: min = lowest point
+    // in view, max = min + 2×(visible elevation range), so the profile fills
+    // exactly the bottom half of the chart regardless of zoom level.
+    const portion = computeVisibleEleRange(vStart, vEnd);
+    const portionRange = Math.max(0.5, portion.max - portion.min);
+    eleMin = portion.min;
+    eleMax = portion.min + 2 * portionRange;
+  } else {
+    const eleSpan = (model.maxEle - model.minEle) || 1;
+    eleMin = model.minEle - eleSpan * 0.08;
+    eleMax = model.maxEle + eleSpan * 0.08;
+  }
+  const range = eleMax - eleMin;
 
   function xOf(d) { return pad.l + ((d - vStart) / vSpan) * cw; }
   function yOf(e) { return pad.t + ch - ((e - eleMin) / range) * ch; }
@@ -964,6 +1081,13 @@ document.getElementById('btn-color-toggle').addEventListener('click', () => {
   setRouteColorMode(routeColorSlopeMode);
 });
 
+let altYZoomEnabled = false;
+document.getElementById('btn-alt-zoom').addEventListener('click', () => {
+  altYZoomEnabled = !altYZoomEnabled;
+  document.getElementById('btn-alt-zoom').classList.toggle('active', altYZoomEnabled);
+  drawChart();
+});
+
 document.getElementById('segment-step-select').addEventListener('change', e => {
   segmentStep = parseInt(e.target.value, 10) || 50;
   if (!trackData) return;
@@ -1012,13 +1136,21 @@ function startGps() {
   setGpsStatus('Ricerca segnale GPS…', null);
   gpsActive = true;
   gpsBtnLabel.textContent = 'GPS ON';
+  gpsHistory = [];
+  lastGpsFixTime = null;
   requestWakeLock();
 
   gpsWatchId = navigator.geolocation.watchPosition(
     pos => {
       const { latitude, longitude, accuracy } = pos.coords;
+      const now = Date.now();
+
+      gpsHistory.push({ lat: latitude, lon: longitude, t: now });
+      if (gpsHistory.length > GPS_HISTORY_MAX) gpsHistory.shift();
+
       const proj = projectGpsToTrack(latitude, longitude);
       lastGpsDist = proj.dist;
+      lastGpsFixTime = now;
 
       // keep the GPS point fixed at 1/3 of the view whenever we're zoomed in
       const span = viewEnd - viewStart;
@@ -1043,6 +1175,8 @@ function stopGps() {
   gpsWatchId = null;
   gpsActive = false;
   gpsBtnLabel.textContent = 'GPS';
+  gpsHistory = [];
+  lastGpsFixTime = null;
   setGpsStatus('', null);
   releaseWakeLock();
 }
@@ -1058,6 +1192,8 @@ function loadTrack(td) {
   viewStart = 0;
   viewEnd = trackModel.total;
   lastGpsDist = null;
+  lastGpsFixTime = null;
+  gpsHistory = [];
   document.getElementById('zoom-level-select').value = '1';
   document.getElementById('reset-zoom-btn').classList.remove('visible');
 
@@ -1081,6 +1217,8 @@ function loadTrack(td) {
 
   requestAnimationFrame(() => {
     clearFocus();
+    altYZoomEnabled = false;
+    document.getElementById('btn-alt-zoom').classList.remove('active');
     drawChart();
     setRouteColorModeState(false);
     setRouteColorMode(false);
@@ -1124,6 +1262,8 @@ document.getElementById('btn-new').addEventListener('click', () => {
   document.getElementById('zoom-level-select').value = '1';
   clearFocus();
   setRouteColorModeState(false);
+  altYZoomEnabled = false;
+  document.getElementById('btn-alt-zoom').classList.remove('active');
   segmentStep = 50;
   document.getElementById('segment-step-select').value = '50';
   document.getElementById('screen-viewer').style.display = 'none';
