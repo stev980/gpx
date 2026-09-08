@@ -269,7 +269,7 @@ header {
     </div>
     <input type="file" id="file-input" accept=".gpx,application/gpx+xml,text/xml">
   </div>
-  <div class="version-badge">v. 20260907114245</div>
+  <div class="version-badge">v. 20260908122322</div>
   <div id="error-msg"></div>
   <div id="secure-warning"></div>
 </div>
@@ -476,6 +476,24 @@ function slopeAtDist(model, d) {
   let lo = 0, hi = segs.length - 1;
   while (lo < hi) { const mid = (lo + hi) >> 1; (d <= segs[mid].d1) ? hi = mid : lo = mid + 1; }
   return segs[lo] ? segs[lo].slope : 0;
+}
+
+/* Elevation at a given distance, following the SAME straight-line segment
+   approximation actually drawn on the chart (e0→e1 per tratto), rather than
+   the finer true elevation from the raw GPX points. Used only to position the
+   cursor dot, so it always sits exactly on the rendered profile line — the
+   true elevation (from trackModel.interpAtDist) is still used everywhere else
+   (e.g. the QUOTA readout), since it's the more accurate real-world value. */
+function eleOnDrawnSegments(model, d) {
+  d = Math.max(0, Math.min(model.total, d));
+  const segs = model.segments;
+  let lo = 0, hi = segs.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; (d <= segs[mid].d1) ? hi = mid : lo = mid + 1; }
+  const s = segs[lo];
+  if (!s) return model.interpAtDist(d).ele;
+  const span = (s.d1 - s.d0) || 1;
+  const frac = (d - s.d0) / span;
+  return s.e0 + (s.e1 - s.e0) * frac;
 }
 
 /* min/max elevation within a given distance window, used by "Zoom Alt." mode */
@@ -738,8 +756,7 @@ function drawChart() {
 
   if (hoverDist !== null && hoverDist >= vStart && hoverDist <= vEnd) {
     const x = xOf(hoverDist);
-    const p = model.interpAtDist(hoverDist);
-    const y = yOf(p.ele);
+    const y = yOf(eleOnDrawnSegments(model, hoverDist));
     chartCtx.setLineDash([4, 3]);
     chartCtx.strokeStyle = 'rgba(255,255,255,0.8)';
     chartCtx.lineWidth = 1.5;
