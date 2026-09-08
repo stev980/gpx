@@ -114,6 +114,7 @@ body {
 #file-input { display: none; }
 #error-msg { margin-top: 16px; font-size: 0.7rem; color: var(--red); min-height: 1.2em; text-align: center; padding: 0 16px; }
 #secure-warning {
+  display: none;
   margin-top: 18px; font-size: 0.62rem; color: var(--muted); text-align: center;
   max-width: 340px; line-height: 1.5; padding: 10px 14px; border: 1px solid var(--border); border-radius: 4px;
 }
@@ -269,7 +270,7 @@ header {
     </div>
     <input type="file" id="file-input" accept=".gpx,application/gpx+xml,text/xml">
   </div>
-  <div class="version-badge">v. 20260908122322</div>
+  <div class="version-badge">v. 26-09-08-12-33</div>
   <div id="error-msg"></div>
   <div id="secure-warning"></div>
 </div>
@@ -1293,6 +1294,7 @@ document.getElementById('btn-new').addEventListener('click', () => {
   const w = document.getElementById('secure-warning');
   if (!window.isSecureContext) {
     w.innerHTML = '⚠ Questa pagina non è servita in <b>HTTPS</b>: la posizione GPS del telefono non sarà disponibile finché non la apri da un indirizzo https:// (es. Netlify, GitHub Pages).';
+    w.style.display = 'block';
   }
 })();
 </script>
